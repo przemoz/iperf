@@ -432,8 +432,14 @@ enum {
     IERVRSONLYRCVTIMEOUT = 32,  // Client receive timeout is valid only in reverse mode
     IESNDTIMEOUT = 33,      // Illegal message send timeout
     IEUDPFILETRANSFER = 34, // Cannot transfer file using UDP
+<<<<<<< HEAD
     IESERVERAUTHUSERS = 35,  // Cannot access authorized users file
     IECNTLKA = 36,          // Control connection Keepalive period should be larger than the full retry period (interval * count)
+=======
+    IESERVERAUTHUSERS = 35,   // Cannot access authorized users file
+    IENUMPORTS = 91,        // number of ports is less than 1 or larger than server limit
+    IEPORTNUM = 92,         // requested number of parallel streams is larger than the number of ports available for the server
+>>>>>>> abbe506 (Update iperf.h)
     /* Test errors */
     IENEWTEST = 100,        // Unable to create a new test (check perror)
     IEINITTEST = 101,       // Test initialization failed (check perror)

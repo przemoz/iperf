@@ -482,7 +482,11 @@ iperf_strerror(int int_errno)
 	case IETOTALRATE:
 	    snprintf(errstr, len, "total required bandwidth is larger than server limit");
             break;
+<<<<<<< HEAD
         case IESKEWTHRESHOLD:
+=======
+    	case IESKEWTHRESHOLD:
+>>>>>>> abbe506 (Update iperf.h)
 	    snprintf(errstr, len, "skew threshold must be a positive number");
             break;
 	case IEIDLETIMEOUT:
@@ -500,12 +504,21 @@ iperf_strerror(int int_errno)
 	case IENOMSG:
 	    snprintf(errstr, len, "idle timeout for receiving data");
             break;
+<<<<<<< HEAD
         case IESETDONTFRAGMENT:
+=======
+	case IESETDONTFRAGMENT:
+>>>>>>> abbe506 (Update iperf.h)
 	    snprintf(errstr, len, "unable to set IP Do-Not-Fragment flag");
             break;
         case IESETUSERTIMEOUT:
             snprintf(errstr, len, "unable to set TCP USER_TIMEOUT");
             perr = 1;
+        case IENUMPORTS:
+	    snprintf(errstr, len, "number of ports is less than 1 or larger than server limit");
+            break;
+        case IEPORTNUM:
+	    snprintf(errstr, len, "requested number of parallel streams is larger than the number of ports available for the server");		
             break;
 	case IEPTHREADCREATE:
             snprintf(errstr, len, "unable to create thread");
