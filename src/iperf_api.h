@@ -1,5 +1,5 @@
 /*
- * iperf, Copyright (c) 2014-2023, The Regents of the University of
+ * iperf, Copyright (c) 2014-2025, The Regents of the University of
  * California, through Lawrence Berkeley National Laboratory (subject
  * to receipt of any required approvals from the U.S. Dept. of
  * Energy).  All rights reserved.
@@ -101,8 +101,8 @@ typedef atomic_uint_fast64_t atomic_iperf_size_t;
 #define OPT_JSON_STREAM 28
 #define OPT_SND_TIMEOUT 29
 #define OPT_USE_PKCS1_PADDING 30
-#define OPT_SKIP_RX_COPY 32
 #define OPT_CNTL_KA 31
+#define OPT_SKIP_RX_COPY 32
 
 /* states */
 #define TEST_START 1
@@ -216,10 +216,10 @@ void    iperf_set_dont_fragment( struct iperf_test* ipt, int dont_fragment );
 void    iperf_set_test_congestion_control(struct iperf_test* ipt, char* cc);
 void    iperf_set_test_mss(struct iperf_test* ipt, int mss);
 void    iperf_set_mapped_v4(struct iperf_test* ipt, const int val);
-void    iperf_set_on_new_stream_callback(struct iperf_test* ipt, void (*callback)());
-void    iperf_set_on_test_start_callback(struct iperf_test* ipt, void (*callback)());
-void    iperf_set_on_test_connect_callback(struct iperf_test* ipt, void (*callback)());
-void    iperf_set_on_test_finish_callback(struct iperf_test* ipt, void (*callback)());
+void    iperf_set_on_new_stream_callback(struct iperf_test* ipt, void (*callback)(struct iperf_stream *));
+void    iperf_set_on_test_start_callback(struct iperf_test* ipt, void (*callback)(struct iperf_test *));
+void    iperf_set_on_test_connect_callback(struct iperf_test* ipt, void (*callback)(struct iperf_test *));
+void    iperf_set_on_test_finish_callback(struct iperf_test* ipt, void (*callback)(struct iperf_test *));
 
 #if defined(HAVE_SSL)
 void    iperf_set_test_client_username(struct iperf_test *ipt, const char *client_username);
