@@ -3822,7 +3822,7 @@ iperf_print_intermediate(struct iperf_test *test)
         /*  Print stream role just for bidirectional mode. */
 
         if (test->mode == BIDIRECTIONAL) {
-            sprintf(mbuf, "[%s-%s]", stream_must_be_sender?"TX":"RX", test->role == 'c'?"C":"S");
+            snprintf(mbuf, sizeof(mbuf), "[%s-%s]", stream_must_be_sender?"TX":"RX", test->role == 'c'?"C":"S");
         } else {
             mbuf[0] = '\0';
             zbuf[0] = '\0';
@@ -4024,7 +4024,7 @@ iperf_print_results(struct iperf_test *test)
         /*  Print stream role just for bidirectional mode. */
 
         if (test->mode == BIDIRECTIONAL) {
-            sprintf(mbuf, "[%s-%s]", stream_must_be_sender?"TX":"RX", test->role == 'c'?"C":"S");
+            snprintf(mbuf, sizeof(mbuf), "[%s-%s]", stream_must_be_sender?"TX":"RX", test->role == 'c'?"C":"S");
         } else {
             mbuf[0] = '\0';
         }
@@ -4516,7 +4516,7 @@ print_interval_results(struct iperf_test *test, struct iperf_stream *sp, cJSON *
     double bandwidth, lost_percent;
 
     if (test->mode == BIDIRECTIONAL) {
-        sprintf(mbuf, "[%s-%s]", sp->sender?"TX":"RX", test->role == 'c'?"C":"S");
+        snprintf(mbuf, sizeof(mbuf), "[%s-%s]", sp->sender?"TX":"RX", test->role == 'c'?"C":"S");
     } else {
         mbuf[0] = '\0';
         zbuf[0] = '\0';
