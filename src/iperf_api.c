@@ -2291,8 +2291,21 @@ iperf_exchange_parameters(struct iperf_test *test)
 
     } else {
 
-        if (get_parameters(test) < 0)
+        if (get_parameters(test) < 0) {
+            if (iperf_set_send_state(test, SERVER_ERROR) != 0)
+                return -1;
+            err = htonl(i_errno);
+            if (Nwrite(test->ctrl_sck, (char*) &err, sizeof(err), Ptcp) < 0) {
+                i_errno = IECTRLWRITE;
+                return -1;
+            }
+            err = htonl(errno);
+            if (Nwrite(test->ctrl_sck, (char*) &err, sizeof(err), Ptcp) < 0) {
+                i_errno = IECTRLWRITE;
+                return -1;
+            }
             return -1;
+        }
 
         // Check spcific conditions required for UDP under Windows as parallel streams
         // using the same port numebr is not supported.
