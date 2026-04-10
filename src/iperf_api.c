@@ -3298,7 +3298,7 @@ iperf_defaults(struct iperf_test *testp)
     testp->congestion = NULL;
     testp->congestion_used = NULL;
     testp->remote_congestion_used = NULL;
-    testp->server_port = PORT
+    testp->server_port = PORT;
     testp->num_server_ports = 1;
     testp->server_udp_streams_accepted = 0;
     testp->ctrl_sck = -1;
