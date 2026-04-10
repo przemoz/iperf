@@ -1,5 +1,5 @@
 /*
- * iperf, Copyright (c) 2014-2025, The Regents of the University of
+ * iperf, Copyright (c) 2014-2020, 2023, The Regents of the University of
  * California, through Lawrence Berkeley National Laboratory (subject
  * to receipt of any required approvals from the U.S. Dept. of
  * Energy).  All rights reserved.
@@ -24,18 +24,44 @@
  * This code is distributed under a BSD style license, see the LICENSE
  * file for complete information.
  */
-#ifndef        __IPERF_API_H
-#define        __IPERF_API_H
+#ifndef __IPERF_H
+#define __IPERF_H
 
-#include <sys/socket.h>
+#include "iperf_config.h"
+
 #include <sys/time.h>
-#include <setjmp.h>
-#include <stdarg.h>
-#include <stdio.h>
+#include <sys/types.h>
 #include <stdint.h>
-#ifdef __cplusplus
-extern "C" { /* open extern "C" */
+#include <inttypes.h>
+#include <sys/select.h>
+#include <sys/socket.h>
+#ifndef _GNU_SOURCE
+# define _GNU_SOURCE
 #endif
+#ifdef HAVE_LINUX_TCP_H
+#include <linux/tcp.h>
+#else
+#include <netinet/tcp.h>
+#endif
+#include <net/if.h> // for IFNAMSIZ
+
+#if defined(HAVE_CPUSET_SETAFFINITY)
+#include <sys/param.h>
+#include <sys/cpuset.h>
+#endif /* HAVE_CPUSET_SETAFFINITY */
+
+#include "timer.h"
+#include "queue.h"
+#include "cjson.h"
+#include "iperf_time.h"
+#include "portable_endian.h"
+
+#if defined(HAVE_SSL)
+#include <openssl/bio.h>
+#include <openssl/evp.h>
+#endif // HAVE_SSL
+
+#include "iperf_pthread.h"
 
 /*
  * Atomic types highly desired, but if not, we approximate what we need
@@ -44,489 +70,439 @@ extern "C" { /* open extern "C" */
 #ifdef HAVE_STDATOMIC_H
 #include <stdatomic.h>
 #else
-#warning "No <stdatomic.h> available"
-typedef u_int64_t atomic_uint_fast64_t;
+#warning "No <stdatomic.h> available."
+typedef uint64_t atomic_uint_fast64_t;
 #endif // HAVE_STDATOMIC_H
 
-struct iperf_test;
-struct iperf_stream_result;
-struct iperf_interval_results;
-struct iperf_stream;
-struct iperf_time;
-
-#if !defined(__IPERF_H)
+#if !defined(__IPERF_API_H)
 typedef uint_fast64_t iperf_size_t;
 typedef atomic_uint_fast64_t atomic_iperf_size_t;
-#endif // __IPERF_H
+#endif // __IPERF_API_H
 
-/* default settings */
-#define Ptcp SOCK_STREAM
-#define Pudp SOCK_DGRAM
-#define Psctp 12
-#define DEFAULT_UDP_BLKSIZE 1460 /* default is dynamically set, else this */
-#define DEFAULT_TCP_BLKSIZE (128 * 1024)  /* default read/write block size */
-#define DEFAULT_SCTP_BLKSIZE (64 * 1024)
-#define DEFAULT_PACING_TIMER 1000
-#define DEFAULT_NO_MSG_RCVD_TIMEOUT 120000
-#define MIN_NO_MSG_RCVD_TIMEOUT 100
+#if (defined(__vxworks)) || (defined(__VXWORKS__))
+typedef unsigned int uint
+#endif // __vxworks or __VXWORKS__
 
-#define WARN_STR_LEN 128
+struct iperf_sctp_info
+{
+    long rtt;
+    long pmtu;
+    uint32_t wnd;
+    uint32_t cwnd;
+};
 
-/* short option equivalents, used to support options that only have long form */
-#define OPT_SCTP 1
-#define OPT_LOGFILE 2
-#define OPT_GET_SERVER_OUTPUT 3
-#define OPT_UDP_COUNTERS_64BIT 4
-#define OPT_CLIENT_PORT 5
-#define OPT_NUMSTREAMS 6
-#define OPT_FORCEFLUSH 7
-#define OPT_NO_FQ_SOCKET_PACING 9 /* UNUSED */
-#define OPT_FQ_RATE 10
-#define OPT_DSCP 11
-#define OPT_CLIENT_USERNAME 12
-#define OPT_CLIENT_RSA_PUBLIC_KEY 13
-#define OPT_SERVER_RSA_PRIVATE_KEY 14
-#define OPT_SERVER_AUTHORIZED_USERS 15
-#define OPT_PACING_TIMER 16
-#define OPT_CONNECT_TIMEOUT 17
-#define OPT_REPEATING_PAYLOAD 18
-#define OPT_EXTRA_DATA 19
-#define OPT_BIDIRECTIONAL 20
-#define OPT_SERVER_BITRATE_LIMIT 21
-#define OPT_TIMESTAMPS 22
-#define OPT_SERVER_SKEW_THRESHOLD 23
-#define OPT_BIND_DEV 24
-#define OPT_IDLE_TIMEOUT 25
-#define OPT_DONT_FRAGMENT 26
-#define OPT_RCV_TIMEOUT 27
-#define OPT_JSON_STREAM 28
-#define OPT_SND_TIMEOUT 29
-#define OPT_USE_PKCS1_PADDING 30
-#define OPT_CNTL_KA 31
-#define OPT_SKIP_RX_COPY 32
-#define OPT_JSON_STREAM_FULL_OUTPUT 33
-#define OPT_SERVER_MAX_DURATION 34
-#define OPT_GSRO 35
+struct iperf_interval_results
+{
+    atomic_iperf_size_t bytes_transferred; /* bytes transferred in this interval */
+    struct iperf_time interval_start_time;
+    struct iperf_time interval_end_time;
+    float     interval_duration;
 
-/* states */
-#define TEST_START 1
-#define TEST_RUNNING 2
-#define RESULT_REQUEST 3 /* not used */
-#define TEST_END 4
-#define STREAM_BEGIN 5 /* not used */
-#define STREAM_RUNNING 6 /* not used */
-#define STREAM_END 7 /* not used */
-#define ALL_STREAMS_END 8 /* not used */
-#define PARAM_EXCHANGE 9
-#define CREATE_STREAMS 10
-#define SERVER_TERMINATE 11
-#define CLIENT_TERMINATE 12
-#define EXCHANGE_RESULTS 13
-#define DISPLAY_RESULTS 14
-#define IPERF_START 15
-#define IPERF_DONE 16
-#define ACCESS_DENIED (-1)
-#define SERVER_ERROR (-2)
+    /* for UDP */
+    int64_t   interval_packet_count;
+    int64_t   interval_outoforder_packets;
+    int64_t   interval_cnt_error;
+    int64_t   packet_count;
+    double    jitter;
+    int64_t   outoforder_packets;
+    int64_t   cnt_error;
 
-/* Getter routines for some fields inside iperf_test. */
-int	iperf_get_verbose( struct iperf_test* ipt );
-int	iperf_get_control_socket( struct iperf_test* ipt );
-int	iperf_get_test_omit( struct iperf_test* ipt );
-int	iperf_get_test_duration( struct iperf_test* ipt );
-char	iperf_get_test_role( struct iperf_test* ipt );
-int	iperf_get_test_reverse( struct iperf_test* ipt );
-int	iperf_get_test_bidirectional( struct iperf_test* ipt );
-int	iperf_get_test_blksize( struct iperf_test* ipt );
-FILE*	iperf_get_test_outfile( struct iperf_test* ipt );
-uint64_t iperf_get_test_rate( struct iperf_test* ipt );
-int iperf_get_test_pacing_timer( struct iperf_test* ipt );
-uint64_t iperf_get_test_bytes( struct iperf_test* ipt );
-uint64_t iperf_get_test_blocks( struct iperf_test* ipt );
-int     iperf_get_test_burst( struct iperf_test* ipt );
-int	iperf_get_test_socket_bufsize( struct iperf_test* ipt );
-double	iperf_get_test_reporter_interval( struct iperf_test* ipt );
-double	iperf_get_test_stats_interval( struct iperf_test* ipt );
-int	iperf_get_test_num_streams( struct iperf_test* ipt );
-int	iperf_get_test_repeating_payload( struct iperf_test* ipt );
-int	iperf_get_test_timestamps( struct iperf_test* ipt );
-const char* iperf_get_test_timestamp_format( struct iperf_test* ipt );
-int	iperf_get_test_bind_port( struct iperf_test* ipt );
-int	iperf_get_test_server_port( struct iperf_test* ipt );
-char*	iperf_get_test_server_hostname( struct iperf_test* ipt );
-char*	iperf_get_test_template( struct iperf_test* ipt );
-int	iperf_get_test_protocol_id( struct iperf_test* ipt );
-int	iperf_get_test_json_output( struct iperf_test* ipt );
-char*	iperf_get_test_json_output_string ( struct iperf_test* ipt );
-int	iperf_get_test_json_stream( struct iperf_test* ipt );
-int	iperf_get_test_json_stream_full_output( struct iperf_test* ipt );
-int	iperf_get_test_zerocopy( struct iperf_test* ipt );
-int	iperf_get_test_get_server_output( struct iperf_test* ipt );
-char	iperf_get_test_unit_format(struct iperf_test *ipt);
-char*	iperf_get_test_bind_address ( struct iperf_test* ipt );
-char*   iperf_get_test_bind_dev(struct iperf_test *ipt);
-int	iperf_get_test_udp_counters_64bit( struct iperf_test* ipt );
-int	iperf_get_test_one_off( struct iperf_test* ipt );
-int iperf_get_test_tos( struct iperf_test* ipt );
-char*	iperf_get_extra_data( struct iperf_test* ipt );
-char*	iperf_get_iperf_version(void);
-int	iperf_get_test_no_delay( struct iperf_test* ipt );
-int	iperf_get_test_connect_timeout( struct iperf_test* ipt );
-int	iperf_get_dont_fragment( struct iperf_test* ipt );
-char*   iperf_get_test_congestion_control(struct iperf_test* ipt);
-int iperf_get_test_mss(struct iperf_test* ipt);
-int     iperf_get_mapped_v4(struct iperf_test* ipt);
+    int omitted;
+#if (defined(linux) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)) && \
+	defined(TCP_INFO)
+    struct tcp_info tcpInfo; /* getsockopt(TCP_INFO) for Linux, {Free,Net,Open}BSD */
+#elif (defined(__APPLE__) && defined(__MACH__))  && defined(TCP_CONNECTION_INFO)
+    struct tcp_connection_info tcpConnInfo;
+#else
+    /* Just placeholders, never accessed. */
+    char *tcpInfo;
+#endif
+#if defined(HAVE_SCTP_H)
+    struct iperf_sctp_info sctp_info;
+#endif /* HAVE_SCTP_H */
+    long interval_retrans;
+    long snd_cwnd;
+    long snd_wnd;
+    TAILQ_ENTRY(iperf_interval_results) irlistentries;
+    void     *custom_data;
+    long rtt;
+    long rttvar;
+    long pmtu;
+    long reorder;
+};
 
-/* Setter routines for some fields inside iperf_test. */
-void	iperf_set_verbose( struct iperf_test* ipt, int verbose );
-void	iperf_set_control_socket( struct iperf_test* ipt, int ctrl_sck );
-void	iperf_set_test_omit( struct iperf_test* ipt, int omit );
-void	iperf_set_test_duration( struct iperf_test* ipt, int duration );
-void	iperf_set_test_reporter_interval( struct iperf_test* ipt, double reporter_interval );
-void	iperf_set_test_stats_interval( struct iperf_test* ipt, double stats_interval );
-void	iperf_set_test_state( struct iperf_test* ipt, signed char state );
-void	iperf_set_test_blksize( struct iperf_test* ipt, int blksize );
-void	iperf_set_test_logfile( struct iperf_test* ipt, const char *logfile );
-void	iperf_set_test_rate( struct iperf_test* ipt, uint64_t rate );
-void    iperf_set_test_pacing_timer( struct iperf_test* ipt, int pacing_timer );
-void    iperf_set_test_bytes( struct iperf_test* ipt, uint64_t bytes );
-void    iperf_set_test_blocks( struct iperf_test* ipt, uint64_t blocks );
-void	iperf_set_test_burst( struct iperf_test* ipt, int burst );
-void	iperf_set_test_bind_port( struct iperf_test* ipt, int bind_port );
-void	iperf_set_test_server_port( struct iperf_test* ipt, int server_port );
-void	iperf_set_test_socket_bufsize( struct iperf_test* ipt, int socket_bufsize );
-void	iperf_set_test_num_streams( struct iperf_test* ipt, int num_streams );
-void	iperf_set_test_repeating_payload( struct iperf_test* ipt, int repeating_payload );
-void	iperf_set_test_timestamps( struct iperf_test* ipt, int timestamps );
-void	iperf_set_test_timestamp_format( struct iperf_test*, const char *tf );
-void	iperf_set_test_role( struct iperf_test* ipt, char role );
-void	iperf_set_test_server_hostname( struct iperf_test* ipt, const char* server_hostname );
-void    iperf_set_test_template( struct iperf_test *ipt, const char *tmp_template );
-void	iperf_set_test_reverse( struct iperf_test* ipt, int reverse );
-void	iperf_set_test_json_output( struct iperf_test* ipt, int json_output );
-void	iperf_set_test_json_stream( struct iperf_test* ipt, int json_stream );
-void	iperf_set_test_json_stream_full_output( struct iperf_test* ipt, int json_stream_full_output );
-void    iperf_set_test_json_callback(struct iperf_test *ipt, void (*callback)(struct iperf_test *, char *));
-int	iperf_has_zerocopy( void );
-void	iperf_set_test_zerocopy( struct iperf_test* ipt, int zerocopy );
-void	iperf_set_test_get_server_output( struct iperf_test* ipt, int get_server_output );
-void	iperf_set_test_unit_format(struct iperf_test *ipt, char unit_format);
-void	iperf_set_test_bind_address( struct iperf_test* ipt, const char *bind_address );
-void    iperf_set_test_bind_dev(struct iperf_test *ipt, const char *bnd_dev);
-void	iperf_set_test_udp_counters_64bit( struct iperf_test* ipt, int udp_counters_64bit );
-void	iperf_set_test_one_off( struct iperf_test* ipt, int one_off );
-void    iperf_set_test_tos( struct iperf_test* ipt, int tos );
-void	iperf_set_test_extra_data( struct iperf_test* ipt, const char *dat );
-void    iperf_set_test_bidirectional( struct iperf_test* ipt, int bidirectional);
-void    iperf_set_test_no_delay( struct iperf_test* ipt, int no_delay);
-void    iperf_set_dont_fragment( struct iperf_test* ipt, int dont_fragment );
-void    iperf_set_test_congestion_control(struct iperf_test* ipt, char* cc);
-void    iperf_set_test_mss(struct iperf_test* ipt, int mss);
-void    iperf_set_mapped_v4(struct iperf_test* ipt, const int val);
-void    iperf_set_on_new_stream_callback(struct iperf_test* ipt, void (*callback)(struct iperf_stream *));
-void    iperf_set_on_test_start_callback(struct iperf_test* ipt, void (*callback)(struct iperf_test *));
-void    iperf_set_on_test_connect_callback(struct iperf_test* ipt, void (*callback)(struct iperf_test *));
-void    iperf_set_on_test_finish_callback(struct iperf_test* ipt, void (*callback)(struct iperf_test *));
+struct iperf_stream_result
+{
+    atomic_iperf_size_t bytes_received;
+    atomic_iperf_size_t bytes_sent;
+    atomic_iperf_size_t bytes_received_this_interval;
+    atomic_iperf_size_t bytes_sent_this_interval;
+    atomic_iperf_size_t bytes_sent_omit;
+    long stream_prev_total_retrans;
+    long stream_retrans;
+    long stream_reorder;
+    long stream_max_rtt;
+    long stream_min_rtt;
+    long stream_sum_rtt;
+    int stream_count_rtt;
+    long stream_max_snd_cwnd;
+    long stream_max_snd_wnd;
+    struct iperf_time start_time;
+    struct iperf_time end_time;
+    struct iperf_time start_time_fixed;
+    double sender_time;
+    double receiver_time;
+    TAILQ_HEAD(irlisthead, iperf_interval_results) interval_results;
+    void     *data;
+};
 
+#define COOKIE_SIZE 37		/* size of an ascii uuid */
+struct iperf_settings
+{
+    int       domain;               /* AF_INET or AF_INET6 */
+    int       socket_bufsize;       /* window size for TCP */
+    int       blksize;              /* size of read/writes (-l) */
+    iperf_size_t  rate;                 /* target data rate for application pacing*/
+    iperf_size_t  bitrate_limit;   /* server's maximum allowed total data rate for all streams*/
+    double        bitrate_limit_interval;  /* interval for averaging total data rate */
+    int           bitrate_limit_stats_per_interval;     /* calculated number of stats periods for averaging total data rate */
+    uint64_t  fqrate;               /* target data rate for FQ pacing*/
+    int	      pacing_timer;	    /* pacing timer in microseconds */
+    int       burst;                /* packets per burst */
+    int       mss;                  /* for TCP MSS */
+    int       ttl;                  /* IP TTL option */
+    int       tos;                  /* type of service bit */
+    int       flowlabel;            /* IPv6 flow label */
+    iperf_size_t bytes;             /* number of bytes to send */
+    iperf_size_t blocks;            /* number of blocks (packets) to send */
+    char      unit_format;          /* -f */
+    int       num_ostreams;         /* SCTP initmsg settings */
+    int       dont_fragment;        /* Whether to set IP flag Do-Not_Fragment */
 #if defined(HAVE_SSL)
-void    iperf_set_test_client_username(struct iperf_test *ipt, const char *client_username);
-void    iperf_set_test_client_password(struct iperf_test *ipt, const char *client_password);
-void    iperf_set_test_client_rsa_pubkey(struct iperf_test *ipt, const char *client_rsa_pubkey_base64);
-void    iperf_set_test_client_rsa_pubkey_from_file(struct iperf_test *ipt, const char *client_rsa_pubkey_file);
-void    iperf_set_test_server_authorized_users(struct iperf_test *ipt, const char *server_authorized_users);
-void    iperf_set_test_server_skew_threshold(struct iperf_test *ipt, int server_skew_threshold);
-void    iperf_set_test_server_rsa_privkey(struct iperf_test *ipt, const char *server_rsa_privkey_base64);
-void    iperf_set_test_server_rsa_privkey_from_file(struct iperf_test *ipt, const char *server_rsa_privkey_file);
+    char      *authtoken;           /* Authentication token */
+    char      *client_username;
+    char      *client_password;
+    EVP_PKEY  *client_rsa_pubkey;
 #endif // HAVE_SSL
+    int       skip_rx_copy;         /* Whether to ignore received messages data, using MSG_TRUNC option */
+    int	      connect_timeout;	    /* socket connection timeout, in ms */
+    int       idle_timeout;         /* server idle time timeout */
+    unsigned int snd_timeout; /* Timeout for sending tcp messages in active mode, in us */
+    struct iperf_time rcv_timeout;  /* Timeout for receiving messages in active mode, in us */
+    int       cntl_ka;              /* Use Control TCP connection Keepalive */
+    int       cntl_ka_keepidle;     /* Control TCP connection Keepalive idle time (TCP_KEEPIDLE) */
+    int       cntl_ka_interval;     /* Control TCP connection Keepalive interval between retries (TCP_KEEPINTV) */
+    int       cntl_ka_count;        /* Control TCP connection Keepalive number of retries (TCP_KEEPCNT) */
+    /* GSO/GRO fields always present to allow client-server negotiation regardless of local support */
+    int       gso;
+    int       gso_dg_size;
+    int       gso_bf_size;
+    int       gro;
+    int       gro_bf_size;
+};
 
-void	iperf_set_test_connect_timeout(struct iperf_test *ipt, int ct);
+struct iperf_test;
 
-/**
- * exchange_parameters - handles the param_Exchange part for client
- *
- */
-int      iperf_exchange_parameters(struct iperf_test * test);
+struct iperf_stream
+{
+    struct iperf_test* test;
 
-/**
- * add_to_interval_list -- adds new interval to the interval_list
- *
- */
-void      add_to_interval_list(struct iperf_stream_result * rp, struct iperf_interval_results *temp);
+    pthread_t thr;
+    int thread_created;
+    int       done;
 
-/**
- * connect_msg -- displays connection message
- * denoting sender/receiver details
- *
- */
-void      connect_msg(struct iperf_stream * sp);
+    /* configurable members */
+    int       local_port;
+    int       remote_port;
+    int       socket;
+    int       id;
+    int       sender;
+	/* XXX: is settings just a pointer to the same struct in iperf_test? if not,
+		should it be? */
+    struct iperf_settings *settings;	/* pointer to structure settings */
 
-/**
- * iperf_stats_callback -- handles the statistic gathering
- *
- */
-void     iperf_stats_callback(struct iperf_test * test);
+    /* non configurable members */
+    struct iperf_stream_result *result;	/* structure pointer to result */
+    Timer     *send_timer;
+    int       green_light;
+    int       buffer_fd;	/* data to send, file descriptor */
+    char      *buffer;		/* data to send, mmapped */
+    int       pending_size;     /* pending data to send */
+    int       diskfile_fd;	/* file to send, file descriptor */
+    int	      diskfile_left;	/* remaining file data on disk */
 
-/**
- * iperf_reporter_callback -- handles the report printing
- *
- */
-void     iperf_reporter_callback(struct iperf_test * test);
+    /*
+     * for udp measurements - This can be a structure outside stream, and
+     * stream can have a pointer to this
+     */
+    int64_t   packet_count;
+    int64_t   peer_packet_count;
+    int64_t   peer_omitted_packet_count;
+    int64_t   omitted_packet_count;
+    double    jitter;
+    double    prev_transit;
+    int64_t   outoforder_packets;
+    int64_t   omitted_outoforder_packets;
+    int64_t   cnt_error;
+    int64_t   omitted_cnt_error;
+    uint64_t  target;
 
-/**
- * iperf_new_test -- return a new iperf_test with default values
- *
- * returns NULL on failure
- *
- */
-struct iperf_test *iperf_new_test(void);
+    struct sockaddr_storage local_addr;
+    struct sockaddr_storage remote_addr;
 
-int      iperf_defaults(struct iperf_test * testp);
+    int       (*rcv) (struct iperf_stream * stream);
+    int       (*snd) (struct iperf_stream * stream);
 
-/**
- * iperf_free_test -- free resources used by test, calls iperf_free_stream to
- * free streams
- *
- */
-void      iperf_free_test(struct iperf_test * testp);
+    /* chained send/receive routines for -F mode */
+    int       (*rcv2) (struct iperf_stream * stream);
+    int       (*snd2) (struct iperf_stream * stream);
 
-/**
- * iperf_new_stream -- return a net iperf_stream with default values
- *
- * returns NULL on failure
- *
- */
-struct iperf_stream *iperf_new_stream(struct iperf_test *, int, int);
+//    struct iperf_stream *next;
+    SLIST_ENTRY(iperf_stream) streams;
 
-/**
- * iperf_add_stream -- add a stream to a test
- *
- */
-void      iperf_add_stream(struct iperf_test * test, struct iperf_stream * stream);
+    void     *data;
+};
 
-/**
- * iperf_init_stream -- init resources associated with test
- *
- */
-int       iperf_init_stream(struct iperf_stream *, struct iperf_test *);
+struct protocol {
+    int       id;
+    char      *name;
+    int       (*accept)(struct iperf_test *);
+    int       (*listen)(struct iperf_test *);
+    int       (*connect)(struct iperf_test *);
+    int       (*send)(struct iperf_stream *);
+    int       (*recv)(struct iperf_stream *);
+    int       (*init)(struct iperf_test *);
+    SLIST_ENTRY(protocol) protocols;
+};
 
-/**
- * iperf_free_stream -- free resources associated with test
- *
- */
-void      iperf_free_stream(struct iperf_stream * sp);
+struct iperf_textline {
+    char *line;
+    TAILQ_ENTRY(iperf_textline) textlineentries;
+};
 
-/**
- * iperf_common_sockopts -- init stream socket with common socket options
- *
- */
-int       iperf_common_sockopts(struct iperf_test *, int s);
+struct xbind_entry {
+    char *name;
+    struct addrinfo *ai;
+    TAILQ_ENTRY(xbind_entry) link;
+};
 
-#if defined (HAVE_TCP_KEEPALIVE)
-/**
- * iperf_set_control_keepalive -- set control connection TCP keepalive
- *
- */
-int       iperf_set_control_keepalive(struct iperf_test *test);
-#endif //HAVE_TCP_KEEPALIVE
+enum iperf_mode {
+	SENDER = 1,
+	RECEIVER = 0,
+	BIDIRECTIONAL = -1
+};
 
-int has_tcpinfo(void);
-int has_tcpinfo_retransmits(void);
-void save_tcpinfo(struct iperf_stream *sp, struct iperf_interval_results *irp);
-long get_total_retransmits(struct iperf_interval_results *irp);
-long get_snd_cwnd(struct iperf_interval_results *irp);
-long get_snd_wnd(struct iperf_interval_results *irp);
-long get_rtt(struct iperf_interval_results *irp);
-long get_rttvar(struct iperf_interval_results *irp);
-long get_pmtu(struct iperf_interval_results *irp);
-long get_reorder(struct iperf_interval_results *irp);
-void print_tcpinfo(struct iperf_test *test);
-
-int iperf_set_send_state(struct iperf_test *test, signed char state);
-void iperf_check_throttle(struct iperf_stream *sp, struct iperf_time *nowP);
-int iperf_send_mt(struct iperf_stream *) /* __attribute__((hot)) */;
-int iperf_recv_mt(struct iperf_stream *);
-void iperf_catch_sigend(void (*handler)(int));
-void iperf_got_sigend(struct iperf_test *test, int sig) __attribute__ ((noreturn));
-void usage(void);
-void usage_long(FILE * f);
-void warning(const char *);
-int iperf_exchange_results(struct iperf_test *);
-int iperf_init_test(struct iperf_test *);
-int iperf_create_send_timers(struct iperf_test *);
-int iperf_parse_arguments(struct iperf_test *, int, char **);
-int iperf_open_logfile(struct iperf_test *);
-void iperf_close_logfile(struct iperf_test *);
-void iperf_reset_test(struct iperf_test *);
-void iperf_reset_stats(struct iperf_test * test);
-
-struct protocol *get_protocol(struct iperf_test *, int);
-int set_protocol(struct iperf_test *, int);
-
-void iperf_on_new_stream(struct iperf_stream *);
-void iperf_on_test_start(struct iperf_test *);
-void iperf_on_connect(struct iperf_test *);
-void iperf_on_test_finish(struct iperf_test *);
-
-extern jmp_buf env;
-
-/* Client routines. */
-int iperf_run_client(struct iperf_test *);
-int iperf_connect(struct iperf_test *);
-int iperf_create_streams(struct iperf_test *, int sender);
-int iperf_handle_message_client(struct iperf_test *);
-int iperf_client_end(struct iperf_test *);
-
-/* Server routines. */
-int iperf_run_server(struct iperf_test *);
-int iperf_server_listen(struct iperf_test *);
-int iperf_accept(struct iperf_test *);
-int iperf_handle_message_server(struct iperf_test *);
-int iperf_create_pidfile(struct iperf_test *);
-int iperf_delete_pidfile(struct iperf_test *);
-void iperf_check_total_rate(struct iperf_test *, iperf_size_t);
-
-/* JSON output routines. */
-int iperf_json_start(struct iperf_test *);
-int iperf_json_finish(struct iperf_test *);
-
-/* CPU affinity routines */
-int iperf_setaffinity(struct iperf_test *, int affinity);
-int iperf_clearaffinity(struct iperf_test *);
-
-/* Custom printf routine. */
-int iperf_printf(struct iperf_test *test, const char *format, ...) __attribute__ ((format(printf,2,3)));
-int iflush(struct iperf_test *test);
-
-/* Error routines. */
-void iperf_err(struct iperf_test *test, const char *format, ...) __attribute__ ((format(printf,2,3)));
-void iperf_errexit(struct iperf_test *test, const char *format, ...) __attribute__ ((format(printf,2,3),noreturn));
-void iperf_signormalexit(struct iperf_test *test, const char *format, ...) __attribute__ ((format(printf,2,3),noreturn));
-void iperf_exit(struct iperf_test *test, int exit_code, const char *format, va_list argp) __attribute__ ((noreturn));
-char *iperf_strerror(int);
-extern int i_errno;
-extern const char *errarg;
-enum {
-    IENONE = 0,             // No error
-    /* Parameter errors */
-    IESERVCLIENT = 1,       // Iperf cannot be both server and client
-    IENOROLE = 2,           // Iperf must either be a client (-c) or server (-s)
-    IESERVERONLY = 3,       // This option is server only
-    IECLIENTONLY = 4,       // This option is client only
-    IEDURATION = 5,         // test duration too long. Maximum value = %dMAX_TIME
-    IENUMSTREAMS = 6,       // Number of parallel streams too large. Maximum value = %dMAX_STREAMS
-    IEBLOCKSIZE = 7,        // Block size too large. Maximum value = %dMAX_BLOCKSIZE
-    IEBUFSIZE = 8,          // Socket buffer size too large. Maximum value = %dMAX_TCP_BUFFER
-    IEINTERVAL = 9,         // Invalid report interval (min = %gMIN_INTERVAL, max = %gMAX_INTERVAL seconds)
-    IEMSS = 10,             // MSS too large. Maximum value = %dMAX_MSS
-    IENOSENDFILE = 11,      // This OS does not support sendfile
-    IEOMIT = 12,            // Bogus value for --omit
-    IEUNIMP = 13,           // Not implemented yet
-    IEFILE = 14,            // -F file couldn't be opened
-    IEBURST = 15,           // Invalid burst count. Maximum value = %dMAX_BURST
-    IEENDCONDITIONS = 16,   // Only one test end condition (-t, -n, -k) may be specified
-    IELOGFILE = 17,	    // Can't open log file
-    IENOSCTP = 18,	    // No SCTP support available
-    IEBIND = 19,	    // UNUSED:  Local port specified with no local bind option
-    IEUDPBLOCKSIZE = 20,    // Block size invalid
-    IEBADTOS = 21,	    // Bad TOS value
-    IESETCLIENTAUTH = 22,   // Bad configuration of client authentication
-    IESETSERVERAUTH = 23,   // Bad configuration of server authentication
-    IEBADFORMAT = 24,	    // Bad format argument to -f
-    IEREVERSEBIDIR = 25,    // Iperf cannot be both reverse and bidirectional
-    IEBADPORT = 26,	    // Bad port number
-    IETOTALRATE = 27,       // Total required bandwidth is larger than server's limit
-    IETOTALINTERVAL = 28,   // Invalid time interval for calculating average data rate
-    IESKEWTHRESHOLD = 29,   // Invalid value specified as skew threshold
-    IEIDLETIMEOUT = 30,     // Invalid value specified as idle state timeout
-    IERCVTIMEOUT = 31,      // Illegal message receive timeout
-    IERVRSONLYRCVTIMEOUT = 32,  // Client receive timeout is valid only in reverse mode
-    IESNDTIMEOUT = 33,      // Illegal message send timeout
-    IEUDPFILETRANSFER = 34, // Cannot transfer file using UDP
-    IESERVERAUTHUSERS = 35,  // Cannot access authorized users file
-    IECNTLKA = 36,          // Control connection Keepalive period should be larger than the full retry period (interval * count)
-    IEMAXSERVERTESTDURATIONEXCEEDED = 37, // Client's duration exceeds server's maximum duration
-    IEUNITVAL = 38,         // Invalid unit value or suffix
-    IENUMPORTS = 39,        // number of ports is less than 1 or larger than server limit
-    IEPORTNUM = 40,         // requested number of parallel streams is larger than the number of ports available for the server
-    /* Test errors */
-    IENEWTEST = 100,        // Unable to create a new test (check perror)
-    IEINITTEST = 101,       // Test initialization failed (check perror)
-    IELISTEN = 102,         // Unable to listen for connections (check perror)
-    IECONNECT = 103,        // Unable to connect to server (check herror/perror) [from netdial]
-    IEACCEPT = 104,         // Unable to accept connection from client (check herror/perror)
-    IESENDCOOKIE = 105,     // Unable to send cookie to server (check perror)
-    IERECVCOOKIE = 106,     // Unable to receive cookie from client (check perror)
-    IECTRLWRITE = 107,      // Unable to write to the control socket (check perror)
-    IECTRLREAD = 108,       // Unable to read from the control socket (check perror)
-    IECTRLCLOSE = 109,      // Control socket has closed unexpectedly
-    IEMESSAGE = 110,        // Received an unknown message
-    IESENDMESSAGE = 111,    // Unable to send control message to client/server (check perror)
-    IERECVMESSAGE = 112,    // Unable to receive control message from client/server (check perror)
-    IESENDPARAMS = 113,     // Unable to send parameters to server (check perror)
-    IERECVPARAMS = 114,     // Unable to receive parameters from client (check perror)
-    IEPACKAGERESULTS = 115, // Unable to package results (check perror)
-    IESENDRESULTS = 116,    // Unable to send results to client/server (check perror)
-    IERECVRESULTS = 117,    // Unable to receive results from client/server (check perror)
-    IESELECT = 118,         // Select failed (check perror)
-    IECLIENTTERM = 119,     // The client has terminated
-    IESERVERTERM = 120,     // The server has terminated
-    IEACCESSDENIED = 121,   // The server is busy running a test. Try again later.
-    IESETNODELAY = 122,     // Unable to set TCP/SCTP NODELAY (check perror)
-    IESETMSS = 123,         // Unable to set TCP/SCTP MSS (check perror)
-    IESETBUF = 124,         // Unable to set socket buffer size (check perror)
-    IESETTOS = 125,         // Unable to set IP TOS (check perror)
-    IESETCOS = 126,         // Unable to set IPv6 traffic class (check perror)
-    IESETFLOW = 127,        // Unable to set IPv6 flow label
-    IEREUSEADDR = 128,      // Unable to set reuse address on socket (check perror)
-    IENONBLOCKING = 129,    // Unable to set socket to non-blocking (check perror)
-    IESETWINDOWSIZE = 130,  // Unable to set socket window size (check perror)
-    IEPROTOCOL = 131,       // Protocol does not exist
-    IEAFFINITY = 132,       // Unable to set CPU affinity (check perror)
-    IEDAEMON = 133,	    // Unable to become a daemon process
-    IESETCONGESTION = 134,  // Unable to set TCP_CONGESTION
-    IEPIDFILE = 135,	    // Unable to write PID file
-    IEV6ONLY = 136,  	    // Unable to set/unset IPV6_V6ONLY (check perror)
-    IESETSCTPDISABLEFRAG = 137, // Unable to set SCTP Fragmentation (check perror)
-    IESETSCTPNSTREAM= 138,  //  Unable to set SCTP number of streams (check perror)
-    IESETSCTPBINDX= 139,    // Unable to process sctp_bindx() parameters
-    IESETPACING= 140,       // Unable to set socket pacing rate
-    IESETBUF2= 141,	    // Socket buffer size incorrect (written value != read value)
-    IEAUTHTEST = 142,       // Test authorization failed
-    IEBINDDEV = 143,        // Unable to bind-to-device (check perror, maybe permissions?)
-    IENOMSG = 144,          // No message was received for NO_MSG_RCVD_TIMEOUT time period
-    IESETDONTFRAGMENT = 145,   // Unable to set IP Do-Not-Fragment
-    IEBINDDEVNOSUPPORT = 146,  // `ip%%dev` is not supported as system does not support bind to device
-    IEHOSTDEV = 147,        // host device name (ip%%<dev>) is supported (and required) only for IPv6 link-local address
-    IESETUSERTIMEOUT = 148, // Unable to set TCP USER_TIMEOUT (check perror)
-    IEPTHREADCREATE=150,	// Unable to create thread (check perror)
-    IEPTHREADCANCEL=151,        // Unable to cancel thread (check perror)
-    IEPTHREADJOIN=152,		// Unable to join thread (check perror)
-    IEPTHREADATTRINIT=153,      // Unable to initialize thread attribute (check perror)
-    IEPTHREADATTRDESTROY=154,      // Unable to destroy thread attribute (check perror)
-    IESETCNTLKA = 155,         // Unable to set socket keepalive (SO_KEEPALIVE) option
-    IESETCNTLKAKEEPIDLE = 156, // Unable to set socket keepalive TCP period (TCP_KEEPIDLE) option
-    IESETCNTLKAINTERVAL = 157, // Unable to set/get socket keepalive TCP retry interval (TCP_KEEPINTVL) option
-    IESETCNTLKACOUNT = 158,    // Unable to set/get socket keepalive TCP number of retries (TCP_KEEPCNT) option
-    IEPTHREADSIGMASK=159,      // Unable to initialize sub thread signal mask (check perror)
-    IESERVERTESTDURATIONEXPIRED = 160, // Server test duration expired
-    /* Stream errors */
-    IECREATESTREAM = 200,   // Unable to create a new stream (check herror/perror)
-    IEINITSTREAM = 201,     // Unable to initialize stream (check herror/perror)
-    IESTREAMLISTEN = 202,   // Unable to start stream listener (check perror)
-    IESTREAMCONNECT = 203,  // Unable to connect stream (check herror/perror)
-    IESTREAMACCEPT = 204,   // Unable to accept stream connection (check perror)
-    IESTREAMWRITE = 205,    // Unable to write to stream socket (check perror)
-    IESTREAMREAD = 206,     // Unable to read from stream (check perror)
-    IESTREAMCLOSE = 207,    // Stream has closed unexpectedly
-    IESTREAMID = 208,       // Stream has invalid ID
-    /* Timer errors */
-    IENEWTIMER = 300,       // Unable to create new timer (check perror)
-    IEUPDATETIMER = 301,    // Unable to update timer (check perror)
+enum debug_level {
+    DEBUG_LEVEL_ERROR = 1,
+    DEBUG_LEVEL_WARN = 2,
+    DEBUG_LEVEL_INFO = 3,
+    DEBUG_LEVEL_DEBUG = 4,
+    DEBUG_LEVEL_MAX = 4
 };
 
 
-#ifdef __cplusplus
-} /* close extern "C" */
+struct iperf_test
+{
+    pthread_mutex_t print_mutex;
+
+    char      role;                             /* 'c' lient or 's' erver */
+    enum iperf_mode mode;
+    int       sender_has_retransmits;
+    int       other_side_has_retransmits;       /* used if mode == BIDIRECTIONAL */
+    struct protocol *protocol;
+    signed char state;
+    char     *server_hostname;                  /* -c option */
+    char     *tmp_template;
+    char     *bind_address;                     /* first -B option */
+    char     *bind_dev;                         /* bind to network device */
+    TAILQ_HEAD(xbind_addrhead, xbind_entry) xbind_addrs; /* all -X opts */
+    int       bind_port;                        /* --cport option */
+    int       server_port;
+    int       num_server_ports;                 /* second value of --port option */
+    int       server_udp_streams_accepted;      /* offset of last server port used - 0 means none used */
+    int       omit;                             /* duration of omit period (-O flag) */
+    int       duration;                         /* total duration of test (-t flag) */
+    int       max_server_duration;               /* maximum possible duration of test as enforced by the server (--max-server-duration flag) */
+    char     *diskfile_name;			/* -F option */
+    int       affinity, server_affinity;	/* -A option */
+#if defined(HAVE_CPUSET_SETAFFINITY)
+    cpuset_t cpumask;
+#endif /* HAVE_CPUSET_SETAFFINITY */
+    char     *title;				/* -T option */
+    char     *extra_data;			/* --extra-data */
+    char     *congestion;			/* -C option */
+    char     *congestion_used;			/* what was actually used */
+    char     *remote_congestion_used;		/* what the other side used */
+    char     *pidfile;				/* -P option */
+
+    char     *logfile;				/* --logfile option */
+    FILE     *outfile;
+
+    int       ctrl_sck;
+    int       mapped_v4;
+    int       listener;
+    int       prot_listener;
+
+    int	      ctrl_sck_mss;			/* MSS for the control channel */
+
+#if defined(HAVE_SSL)
+    char      *server_authorized_users;
+    EVP_PKEY  *server_rsa_private_key;
+    int       server_skew_threshold;
+    int       use_pkcs1_padding;
+#endif // HAVE_SSL
+
+    /* boolean variables for Options */
+    int       daemon;                           /* -D option */
+    int       one_off;                          /* -1 option */
+    int       no_delay;                         /* -N option */
+    int       reverse;                          /* -R option */
+    int       bidirectional;                    /* --bidirectional */
+    int	      verbose;                          /* -V option - verbose mode */
+    int	      json_output;                      /* -J option - JSON output */
+    int	      json_stream;                      /* --json-stream */
+    int       json_stream_full_output;          /* --json-stream-full-output */
+    void      (*json_callback) (struct iperf_test *, char *); /* allow user apps to receive the
+                                                JSON strings,instead of writing them to the output file */
+    int	      zerocopy;                         /* -Z option - use sendfile */
+    int       debug;				/* -d option - enable debug */
+    enum      debug_level debug_level;          /* -d option option - level of debug messages to show */
+    int	      get_server_output;		/* --get-server-output */
+    int	      udp_counters_64bit;		/* --use-64-bit-udp-counters */
+    int       forceflush; /* --forceflush - flushing output at every interval */
+    int	      multisend;
+    int	      repeating_payload;                /* --repeating-payload */
+    int       timestamps;			/* --timestamps */
+    char     *timestamp_format;
+    int       mptcp;				/* -m, --mptcp */
+
+    char     *json_output_string; /* rendered JSON output if json_output is set */
+    /* Select related parameters */
+    int       max_fd;
+    fd_set    read_set;                         /* set of read sockets */
+    fd_set    write_set;                        /* set of write sockets */
+
+    /* Interval related members */
+    int       omitting;
+    double    stats_interval;
+    double    reporter_interval;
+    void      (*stats_callback) (struct iperf_test *);
+    void      (*reporter_callback) (struct iperf_test *);
+    Timer     *omit_timer;
+    Timer     *timer;
+    int        done;
+    Timer     *stats_timer;
+    Timer     *reporter_timer;
+
+    double cpu_util[3];                            /* cpu utilization of the test - total, user, system */
+    double remote_cpu_util[3];                     /* cpu utilization for the remote host/client - total, user, system */
+
+    int       num_streams;                      /* total streams in the test (-P) */
+
+    atomic_iperf_size_t bytes_sent;
+    atomic_iperf_size_t blocks_sent;
+
+    atomic_iperf_size_t bytes_received;
+    atomic_iperf_size_t blocks_received;
+
+    iperf_size_t bitrate_limit_stats_count;               /* Number of stats periods accumulated for server's total bitrate average */
+    iperf_size_t *bitrate_limit_intervals_traffic_bytes;  /* Pointer to a cyclic array that includes the last interval's bytes transferred */
+    iperf_size_t bitrate_limit_last_interval_index;       /* Index of the last interval traffic inserted into the cyclic array */
+    int          bitrate_limit_exceeded;                  /* Set by callback routine when average data rate exceeded the server's bitrate limit */
+
+    int server_last_run_rc;                      /* Save last server run rc for next test */
+    uint server_forced_idle_restarts_count;      /* count number of forced server restarts to make sure it is not stack */
+    uint server_forced_no_msg_restarts_count;    /* count number of forced server restarts to make sure it is not stack */
+    uint server_test_number;                     /* count number of tests performed by a server */
+
+    char      cookie[COOKIE_SIZE];
+//    struct iperf_stream *streams;               /* pointer to list of struct stream */
+    SLIST_HEAD(slisthead, iperf_stream) streams;
+    struct iperf_settings *settings;
+
+    SLIST_HEAD(plisthead, protocol) protocols;
+
+    /* callback functions */
+    void      (*on_new_stream)(struct iperf_stream *);
+    void      (*on_test_start)(struct iperf_test *);
+    void      (*on_connect)(struct iperf_test *);
+    void      (*on_test_finish)(struct iperf_test *);
+
+    /* cJSON handles for use when in -J mode */\
+    cJSON *json_top;
+    cJSON *json_start;
+    cJSON *json_connected;
+    cJSON *json_intervals;
+    cJSON *json_end;
+
+    /* Server output (use on client side only) */
+    char *server_output_text;
+    cJSON *json_server_output;
+
+    /* Server output (use on server side only) */
+    TAILQ_HEAD(iperf_textlisthead, iperf_textline) server_output_list;
+
+};
+
+/* default settings */
+#define PORT 5201  /* default port to listen on (don't use the same port as iperf2) */
+#define uS_TO_NS 1000
+#define mS_TO_US 1000
+#define SEC_TO_mS 1000
+#define SEC_TO_US 1000000LL
+#define UDP_RATE (1024 * 1024) /* 1 Mbps */
+#define OMIT 0 /* seconds */
+#define DURATION 10 /* seconds */
+
+#define SEC_TO_NS 1000000000LL	/* too big for enum/const on some platforms */
+#define MAX_RESULT_STRING 4096
+
+#define UDP_BUFFER_EXTRA 1024
+
+#define MAX_PARAMS_JSON_STRING 8 * 1024
+
+/* constants for command line arg sanity checks */
+#define MB (1024 * 1024)
+#define MAX_TCP_BUFFER (512 * MB)
+#define MAX_BLOCKSIZE MB
+/* Minimum size UDP send is the size of two 32-bit ints followed by a 64-bit int */
+#define MIN_UDP_BLOCKSIZE (4 + 4 + 8)
+/* Maximum size UDP send is (64K - 1) - IP and UDP header sizes */
+#define MAX_UDP_BLOCKSIZE (65535 - 8 - 20)
+#define MIN_INTERVAL 0.1
+#define MAX_INTERVAL 60.0
+#define MAX_TIME 86400
+#define MAX_OMIT_TIME 600
+#define MAX_BURST 1000
+#define MAX_MSS (32 * 1024 - 1)
+#define MAX_STREAMS 128
+
+#define TIMESTAMP_FORMAT "%c "
+
+extern int gerror; /* error value from getaddrinfo(3), for use in internal error handling */
+
+/* UDP "connect" message and reply (textual value for Wireshark, etc. readability - legacy was numeric) */
+
+#if BYTE_ORDER == BIG_ENDIAN
+#define UDP_CONNECT_MSG 0x39383736
+#define UDP_CONNECT_REPLY 0x36373839
+#define LEGACY_UDP_CONNECT_REPLY 0xb168de3a
+#else
+#define UDP_CONNECT_MSG 0x36373839          // "6789" - legacy value was 123456789
+#define UDP_CONNECT_REPLY 0x39383736        // "9876" - legacy value was 987654321
+#define UDP_CONNECT_REPLY_NEXT_PORT 0x39383735 // "9875": for Windows - indicates use next port
+#define LEGACY_UDP_CONNECT_REPLY 987654321  // Old servers may still reply with the legacy value
 #endif
 
+/* In Reverse mode, maximum number of packets to wait for "accept" response - to handle out of order packets */
+#define MAX_REVERSE_OUT_OF_ORDER_PACKETS 2
 
-#endif /* !__IPERF_API_H */
+#define GSO_BF_MAX_SIZE MAX_UDP_BLOCKSIZE
+#define GRO_BF_MAX_SIZE MAX_UDP_BLOCKSIZE
+
+/* Any type of WIndows OS or Cygwin */
+#if (defined(__CYGWIN__) || defined(_WIN32) || defined(_WIN64) || defined(__WINDOWS__))
+#define WINDOWS_ANY 1
+#endif /* Any Windows type */
+
+#endif /* !__IPERF_H */
