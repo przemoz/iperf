@@ -447,6 +447,8 @@ enum {
     IEUNITVAL = 38,         // Invalid unit value or suffix
     IERVRSONLYSKIPRXCOPY = 39, // This OS does not support --skip-rx-copy
     IEBADDSCP = 40,         // Bad DSCP value
+    IENUMPORTS = 41,        // number of ports is less than 1 or larger than server limit
+    IEPORTNUM = 42,         // requested number of parallel streams is larger than the number of ports available for the server	
     /* Test errors */
     IENEWTEST = 100,        // Unable to create a new test (check perror)
     IEINITTEST = 101,       // Test initialization failed (check perror)
